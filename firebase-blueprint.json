@@ -1,0 +1,55 @@
+{
+  "entities": {
+    "Download": {
+      "title": "Download",
+      "description": "A record of a video download from TeraBox.",
+      "type": "object",
+      "properties": {
+        "videoId": {
+          "type": "string",
+          "description": "The unique ID of the video on TeraBox."
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the video."
+        },
+        "thumbnail": {
+          "type": "string",
+          "description": "The URL of the video thumbnail."
+        },
+        "size": {
+          "type": "string",
+          "description": "The formatted size of the video file."
+        },
+        "quality": {
+          "type": "string",
+          "description": "The selected download quality."
+        },
+        "format": {
+          "type": "string",
+          "description": "The selected download format (e.g., MP4)."
+        },
+        "downloadUrl": {
+          "type": "string",
+          "description": "The direct download URL for the selected quality."
+        },
+        "downloadedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The timestamp when the download was initiated."
+        },
+        "uid": {
+          "type": "string",
+          "description": "The UID of the user who downloaded the video."
+        }
+      },
+      "required": ["videoId", "title", "downloadedAt", "uid"]
+    }
+  },
+  "firestore": {
+    "/downloads/{downloadId}": {
+      "schema": "Download",
+      "description": "Collection of all download records."
+    }
+  }
+}

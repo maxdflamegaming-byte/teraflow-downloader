@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+.background-3d {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+  overflow: hidden;
+  background: var(--bg-color);
+  transition: background 0.3s ease;
+}
+
+.dark {
+  --bg-color: #09090b;
+  --orb-1: rgba(59, 130, 246, 0.4);
+  --orb-2: rgba(147, 51, 234, 0.4);
+  --orb-3: rgba(6, 182, 212, 0.4);
+  --grid-color: rgba(59, 130, 246, 0.15);
+  --particle-color: rgba(59, 130, 246, 0.6);
+}
+
+.light {
+  --bg-color: #ffffff;
+  --orb-1: rgba(59, 130, 246, 0.1);
+  --orb-2: rgba(147, 51, 234, 0.1);
+  --orb-3: rgba(6, 182, 212, 0.1);
+  --grid-color: rgba(59, 130, 246, 0.05);
+  --particle-color: rgba(59, 130, 246, 0.3);
+}
+
+.orbs {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  filter: blur(80px);
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  animation: float 15s infinite linear;
+}
+
+.orb-1 {
+  width: 700px;
+  height: 700px;
+  background: var(--orb-1);
+  top: -10%;
+  left: -10%;
+}
+
+.orb-2 {
+  width: 600px;
+  height: 600px;
+  background: var(--orb-2);
+  bottom: -10%;
+  right: -10%;
+  animation-delay: -5s;
+}
+
+.orb-3 {
+  width: 650px;
+  height: 650px;
+  background: var(--orb-3);
+  top: 40%;
+  left: 30%;
+  animation-delay: -10s;
+}
+
+@keyframes float {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  33% { transform: translate(100px, 50px) rotate(120deg); }
+  66% { transform: translate(-50px, 100px) rotate(240deg); }
+  100% { transform: translate(0, 0) rotate(360deg); }
+}
+
+.grid-container {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  perspective: 1000px;
+}
+
+.grid {
+  position: absolute;
+  width: 200%;
+  height: 200%;
+  top: -50%;
+  left: -50%;
+  background-image: 
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 80px 80px;
+  transform: rotateX(60deg);
+  animation: scroll 20s infinite linear;
+}
+
+@keyframes scroll {
+  0% { transform: rotateX(60deg) translateY(0); }
+  100% { transform: rotateX(60deg) translateY(80px); }
+}
+
+.particles {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+}
+
+.particle {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  background: var(--particle-color);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--particle-color);
+  animation: fall linear infinite;
+}
+
+@keyframes fall {
+  0% { transform: translateY(-10px); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
