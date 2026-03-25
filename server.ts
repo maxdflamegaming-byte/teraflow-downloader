@@ -65,8 +65,13 @@ async function startServer() {
         return res.status(400).json({ error: "Invalid TeraBox URL format" });
       }
 
-      // Fetch info from TeraBox API
-      const response = await axios.get(`https://www.terabox.com/api/shorturlinfo?shorturl=${shorturl}&root=1`, {
+      const targetUrl = `https://www.terabox.com/api/shorturlinfo?shorturl=${shorturl}&root=1`;
+      const requestUrl = process.env.SCRAPERAPI_KEY 
+        ? `http://api.scraperapi.com?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&keep_headers=true` 
+        : targetUrl;
+        
+      // Fetch info from TeraBox API (using ScraperAPI proxy if available)
+      const response = await axios.get(requestUrl, {
         headers: {
           'Cookie': `ndus=${cookie}`,
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -162,8 +167,13 @@ async function startServer() {
           return { url, success: false, error: "Invalid TeraBox URL format" };
         }
 
-        // Fetch info from TeraBox API
-        const response = await axios.get(`https://www.terabox.com/api/shorturlinfo?shorturl=${shorturl}&root=1`, {
+        const targetUrl = `https://www.terabox.com/api/shorturlinfo?shorturl=${shorturl}&root=1`;
+        const requestUrl = process.env.SCRAPERAPI_KEY 
+          ? `http://api.scraperapi.com?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&keep_headers=true` 
+          : targetUrl;
+          
+        // Fetch info from TeraBox API (using ScraperAPI proxy if available)
+        const response = await axios.get(requestUrl, {
           headers: {
             'Cookie': `ndus=${cookie}`,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
