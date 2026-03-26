@@ -85,8 +85,13 @@ const HomePage: React.FC = () => {
         setVideoResults(res.data.results);
         toast.success(`Batch fetch complete: ${res.data.results.length} videos found`);
       }
-    } catch (err) {
-      toast.error('Failed to fetch video info');
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.error || 'Failed to fetch video info';
+      const suggestion = err.response?.data?.suggestion;
+      toast.error('Failed to fetch video. See details below.');
+      if (urls.length === 1) {
+        setVideoResults([{ success: false, url: urls[0], error: errorMsg, suggestion }]);
+      }
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -177,8 +182,14 @@ const HomePage: React.FC = () => {
               onDownload={(q, f, p) => handleDownload(result.data, q, f, p)} 
             />
           ) : (
-            <div key={idx} className="w-full max-w-4xl mx-auto p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-600 text-sm">
-              Failed to fetch video: {result.url}
+            <div key={idx} className="w-full max-w-4xl mx-auto p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-600 space-y-2">
+              <p className="font-bold text-sm">Failed to fetch video: {result.url}</p>
+              {result.error && <p className="text-sm opacity-90">{result.error}</p>}
+              {result.suggestion && (
+                <p className="text-xs bg-red-500/10 p-2.5 rounded-xl border border-red-500/20 mt-2 font-medium">
+                  💡 {result.suggestion}
+                </p>
+              )}
             </div>
           )
         ))}
