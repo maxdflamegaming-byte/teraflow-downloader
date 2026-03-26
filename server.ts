@@ -2,6 +2,11 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import axios from "axios";
+import puppeteer from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
+
+// @ts-ignore
+puppeteer.use(StealthPlugin());
 
 // ============================================================
 // COOKIE POOL SYSTEM
@@ -201,7 +206,6 @@ async function fetchFromTeraBox(
   shorturl: string,
   cookiePool: CookiePool
 ): Promise<FetchResult> {
-  
   const maxRetries = Math.min(cookiePool.size, 5); // Try up to 5 cookies
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -214,78 +218,111 @@ async function fetchFromTeraBox(
       };
     }
 
+    let browser;
     try {
-      const targetUrl = `https://www.terabox.com/api/shorturlinfo?shorturl=${shorturl}&root=1`;
-      const requestUrl = process.env.SCRAPERAPI_KEY
-        ? `http://api.scraperapi.com?api_key=${process.env.SCRAPERAPI_KEY}&url=${encodeURIComponent(targetUrl)}&keep_headers=true`
-        : targetUrl;
+      console.log(`[TeraBox] Attempt ${attempt + 1}/${maxRetries} using ${cookie.label} (Puppeteer Mode)`);
 
-      console.log(`[TeraBox] Attempt ${attempt + 1}/${maxRetries} using ${cookie.label}`);
-
-      const response = await axios.get(requestUrl, {
-        headers: {
-          Cookie: cookie.value.includes('=') ? cookie.value : `ndus=${cookie.value}`,
-          "User-Agent": getRandomUserAgent(),
-          Accept: "application/json, text/plain, */*",
-          "Accept-Language": "en-US,en;q=0.9",
-          Referer: "https://www.terabox.com/",
-        },
-        timeout: 30000,
+      browser = await puppeteer.launch({
+        headless: "new" as any,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu',
+        ],
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
       });
 
-      const data = response.data;
-
-      // Check for retryable errors
-      if (data.errno !== 0) {
-        if (RETRYABLE_ERRORS.includes(data.errno)) {
-          cookiePool.markFailed(cookie, `errno ${data.errno}: ${data.errmsg || "verification required"}`);
-          continue; // Try next cookie
+      const page = await browser.newPage();
+      
+      // Setup simple request interception to save RAM/bandwidth
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        const resourceType = req.resourceType();
+        if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+          req.abort();
+        } else {
+          req.continue();
         }
-        // Non-retryable error (bad URL, etc)
-        return {
-          success: false,
-          error: `TeraBox error: ${data.errmsg || `Code ${data.errno}`}`,
-          errorCode: `TERABOX_${data.errno}`,
-        };
+      });
+
+      // Parse and inject the cookie
+      const cookieStr = cookie.value.includes('=') ? cookie.value : `ndus=${cookie.value}`;
+      const cookiesToSet = cookieStr.split(';').map(c => {
+         const parts = c.trim().split('=');
+         return {
+           name: parts[0],
+           value: parts.slice(1).join('='),
+           domain: '.terabox.com'
+         };
+      }).filter(c => c.name && c.value);
+
+      await page.setCookie(...cookiesToSet);
+
+      let grabbedData: any = null;
+      let hitVerifyV2 = false;
+
+      // Listen for the critical API response
+      page.on('response', async (res) => {
+        const url = res.url();
+        if (url.includes('share/list') || url.includes('api/shorturlinfo')) {
+           try {
+             const json = await res.json();
+             if (json) {
+               if (json.errno === 0 && json.list && json.list.length > 0) {
+                 grabbedData = json;
+               } else if (json.errno === 400210 || json.errmsg?.includes('verify_v2')) {
+                 hitVerifyV2 = true;
+               }
+             }
+           } catch(e) {}
+        }
+      });
+
+      const targetUrl = `https://www.terabox.com/s/${shorturl}`;
+      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+      
+      // Wait for JavaScript to run and network requests to finish
+      await new Promise(r => setTimeout(r, 6000));
+      
+      await browser.close();
+
+      if (grabbedData && grabbedData.list) {
+          cookiePool.markSuccess(cookie);
+          const fileList = grabbedData.list || [];
+          const videoFile = fileList.find((f: any) => f.category === 1 || f.category === "1") || fileList[0];
+
+          if (!videoFile) {
+            return {
+              success: false,
+              error: "No downloadable file found in this link",
+              errorCode: "NO_FILE",
+            };
+          }
+
+          return { success: true, data: buildVideoResponse(videoFile) };
+      } else if (hitVerifyV2) {
+         cookiePool.markFailed(cookie, `Puppeteer intercepted verify_v2 block! IP may be blocked or captcha required.`);
+         continue;
+      } else {
+         cookiePool.markFailed(cookie, `Puppeteer could not intercept valid API response in time.`);
+         continue;
       }
-
-      // Success!
-      cookiePool.markSuccess(cookie);
-
-      const fileList = data.list || [];
-      // Try to find video first, fall back to any file
-      const videoFile =
-        fileList.find((f: any) => f.category === 1 || f.category === "1") ||
-        fileList[0];
-
-      if (!videoFile) {
-        return {
-          success: false,
-          error: "No downloadable file found in this link",
-          errorCode: "NO_FILE",
-        };
-      }
-
-      return { success: true, data: buildVideoResponse(videoFile) };
     } catch (error: any) {
-      const statusCode = error.response?.status;
-      // If it's a network/proxy error, might be worth retrying with another cookie
-      if (statusCode === 403 || statusCode === 429 || !statusCode) {
-        cookiePool.markFailed(cookie, `HTTP ${statusCode || "NETWORK_ERROR"}: ${error.message}`);
-        continue;
-      }
-      // Other errors, don't retry
-      return {
-        success: false,
-        error: `Request failed: ${error.message}`,
-        errorCode: "REQUEST_FAILED",
-      };
+      if (browser) await browser.close().catch(() => {});
+      console.error(error);
+      cookiePool.markFailed(cookie, `Puppeteer Exception: ${error.message}`);
+      continue;
     }
   }
 
   return {
     success: false,
-    error: "Failed after trying all available cookies. Sessions may have expired.",
+    error: "Failed after trying all available cookies. Sessions may have expired or verified failed.",
     errorCode: "ALL_RETRIES_FAILED",
   };
 }
