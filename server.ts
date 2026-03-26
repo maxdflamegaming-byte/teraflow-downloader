@@ -224,7 +224,7 @@ async function fetchFromTeraBox(
 
       const response = await axios.get(requestUrl, {
         headers: {
-          Cookie: `ndus=${cookie.value}`,
+          Cookie: cookie.value.includes('=') ? cookie.value : `ndus=${cookie.value}`,
           "User-Agent": getRandomUserAgent(),
           Accept: "application/json, text/plain, */*",
           "Accept-Language": "en-US,en;q=0.9",
