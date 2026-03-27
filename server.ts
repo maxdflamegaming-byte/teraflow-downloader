@@ -295,26 +295,34 @@ async function fetchFromTeraBox(
       for (const url of targetUrls) {
           console.log(`[TeraBox] Puppeteer navigating to: ${url}`);
           try {
-             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
-             // Wait for Cloudflare turnstile and JS challenges to process
-             await new Promise(r => setTimeout(r, 6000));
+             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35000 });
              
-             // Extract JSON from visible DOM just in case the interceptor missed it (Common for direct JSON API views)
-             const bodyText = await page.evaluate(() => document.body.innerText).catch(() => "{}");
-             try {
-                const domJson = JSON.parse(bodyText);
-                if (Array.isArray(domJson) && domJson.length > 0 && domJson[0].resolutions) {
-                   grabbedData = domJson;
-                } else if (domJson.errno === 0 && domJson.list && domJson.list.length > 0) {
-                   grabbedData = domJson;
-                } else if (domJson.errno === 400210) {
-                   hitVerifyV2 = true;
-                }
-             } catch(e) {}
+             // Wait up to 25 seconds for Cloudflare turnstile and JS challenges to process
+             let waited = 0;
+             while (!grabbedData && waited < 25) {
+                 await new Promise(r => setTimeout(r, 1000));
+                 waited++;
+                 
+                 // Fallback DOM extraction in case response interceptor missed it
+                 const bodyText = await page.evaluate(() => document.body.innerText).catch(() => "{}");
+                 try {
+                    const domJson = JSON.parse(bodyText);
+                    if (Array.isArray(domJson) && domJson.length > 0 && domJson[0].resolutions) {
+                       grabbedData = domJson;
+                    } else if (domJson.errno === 0 && domJson.list && domJson.list.length > 0) {
+                       grabbedData = domJson;
+                    } else if (domJson.errno === 400210 || domJson.errmsg?.includes('verify_v2')) {
+                       hitVerifyV2 = true;
+                    }
+                 } catch(e) {}
+             }
 
-             if (grabbedData) break; // Found valid data! Stop trying URLs
+             if (grabbedData) {
+                 console.log(`[TeraBox] Successfully bypassed Terabox/Cloudflare using: ${url}`);
+                 break; // Found valid data! Stop trying URLs
+             }
           } catch(e) {
-             console.log(`[TeraBox] Puppeteer failed on URL: ${url}`);
+             console.log(`[TeraBox] Puppeteer timeout or failed on URL: ${url}`);
           }
       }
       
