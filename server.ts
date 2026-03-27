@@ -239,18 +239,18 @@ async function fetchFromTeraBox(
 
       const page = await browser.newPage();
       
-      // Setup simple request interception to save RAM/bandwidth
+      // Setup simple request interception to save RAM/bandwidth (only block images/fonts, NOT scripts)
       await page.setRequestInterception(true);
       page.on('request', (req) => {
         const resourceType = req.resourceType();
-        if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
+        if (['image', 'font', 'media', 'stylesheet'].includes(resourceType)) {
           req.abort();
         } else {
           req.continue();
         }
       });
 
-      // Parse and inject the cookie
+      // Parse and inject the cookie (required if we fallback to pure Terabox)
       const cookieStr = cookie.value.includes('=') ? cookie.value : `ndus=${cookie.value}`;
       const cookiesToSet = cookieStr.split(';').map(c => {
          const parts = c.trim().split('=');
@@ -263,18 +263,26 @@ async function fetchFromTeraBox(
 
       await page.setCookie(...cookiesToSet);
 
+      const targetUrls = [
+        `https://www.teraboxdownloader.pro/api/get-info?shorturl=${shorturl}`,
+        `https://terabox-dl.qtcloud.workers.dev/api/get-info?shorturl=${shorturl}`,
+        `https://www.1024terabox.com/api/shorturlinfo?shorturl=${shorturl}&root=1`,
+      ];
+
       let grabbedData: any = null;
       let hitVerifyV2 = false;
 
-      // Listen for the critical API response
+      // Listen for background API responses (for the raw terabox fallback)
       page.on('response', async (res) => {
         const url = res.url();
-        if (url.includes('share/list') || url.includes('api/shorturlinfo')) {
+        if (url.includes('share/list') || url.includes('api/shorturlinfo') || url.includes('/api/get-info')) {
            try {
              const json = await res.json();
              if (json) {
                if (json.errno === 0 && json.list && json.list.length > 0) {
                  grabbedData = json;
+               } else if (Array.isArray(json) && json.length > 0 && json[0].resolutions) {
+                 grabbedData = json; // middleman format
                } else if (json.errno === 400210 || json.errmsg?.includes('verify_v2')) {
                  hitVerifyV2 = true;
                }
@@ -283,16 +291,59 @@ async function fetchFromTeraBox(
         }
       });
 
-      const targetUrl = `https://www.terabox.com/s/${shorturl}`;
-      await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
-      
-      // Wait for JavaScript to run and network requests to finish
-      await new Promise(r => setTimeout(r, 6000));
-      
-      await browser.close();
+      // Try hitting the vulnerable middlemen first, fallback to raw terabox
+      for (const url of targetUrls) {
+          console.log(`[TeraBox] Puppeteer navigating to: ${url}`);
+          try {
+             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+             // Wait for Cloudflare turnstile and JS challenges to process
+             await new Promise(r => setTimeout(r, 6000));
+             
+             // Extract JSON from visible DOM just in case the interceptor missed it (Common for direct JSON API views)
+             const bodyText = await page.evaluate(() => document.body.innerText).catch(() => "{}");
+             try {
+                const domJson = JSON.parse(bodyText);
+                if (Array.isArray(domJson) && domJson.length > 0 && domJson[0].resolutions) {
+                   grabbedData = domJson;
+                } else if (domJson.errno === 0 && domJson.list && domJson.list.length > 0) {
+                   grabbedData = domJson;
+                } else if (domJson.errno === 400210) {
+                   hitVerifyV2 = true;
+                }
+             } catch(e) {}
 
-      if (grabbedData && grabbedData.list) {
+             if (grabbedData) break; // Found valid data! Stop trying URLs
+          } catch(e) {
+             console.log(`[TeraBox] Puppeteer failed on URL: ${url}`);
+          }
+      }
+      
+      await browser.close().catch(() => {});
+
+      if (grabbedData) {
           cookiePool.markSuccess(cookie);
+          
+          // Handle Middleman Array Format
+          if (Array.isArray(grabbedData) && grabbedData.length > 0) {
+              const video = grabbedData[0];
+              const bestLink = video.resolutions["HD Video"] || video.resolutions["Fast Download"] || Object.values(video.resolutions)[0];
+              
+              if (!bestLink) {
+                 return { success: false, error: "No download links mapped in Middleman API", errorCode: "NO_FILE" };
+              }
+
+              return {
+                 success: true,
+                 data: {
+                    file_name: video.title || "Video.mp4",
+                    size: video.size || "Unknown",
+                    dlink: bestLink,
+                    extra_links: []
+                 }
+              };
+          }
+
+          // Handle Raw Terabox List Format
           const fileList = grabbedData.list || [];
           const videoFile = fileList.find((f: any) => f.category === 1 || f.category === "1") || fileList[0];
 
@@ -306,10 +357,10 @@ async function fetchFromTeraBox(
 
           return { success: true, data: buildVideoResponse(videoFile) };
       } else if (hitVerifyV2) {
-         cookiePool.markFailed(cookie, `Puppeteer intercepted verify_v2 block! IP may be blocked or captcha required.`);
+         cookiePool.markFailed(cookie, `Puppeteer intercepted verify_v2 block on raw endpoint! IP may be blocked or captcha required.`);
          continue;
       } else {
-         cookiePool.markFailed(cookie, `Puppeteer could not intercept valid API response in time.`);
+         cookiePool.markFailed(cookie, `Puppeteer could not intercept valid API response from any endpoint.`);
          continue;
       }
     } catch (error: any) {
@@ -322,7 +373,7 @@ async function fetchFromTeraBox(
 
   return {
     success: false,
-    error: "Failed after trying all available cookies. Sessions may have expired or verified failed.",
+    error: "Failed after trying all available cookies and proxy endpoints. Sessions may have expired or verified failed.",
     errorCode: "ALL_RETRIES_FAILED",
   };
 }
